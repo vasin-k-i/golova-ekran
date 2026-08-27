@@ -1,0 +1,8 @@
+work/
+out/
+masks/
+ins/
+project.py
+__pycache__/
+*.pyc
+.DS_Store
