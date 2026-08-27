@@ -33,8 +33,13 @@ if [ "${WANT_CLAUDE}" = "0" ] && [ "${WANT_CODEX}" = "0" ] && [ -z "${DEST}" ]; 
   [ "${WANT_CLAUDE}" = "0" ] && [ "${WANT_CODEX}" = "0" ] && WANT_CLAUDE=1
 fi
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-if [ -f "${HERE}/skills/${SKILL}/SKILL.md" ]; then
+# Локальную копию берём, только если скрипт реально запущен файлом.
+# При `curl | bash` BASH_SOURCE пустой, dirname даёт текущую папку, и установщик
+# мог бы схватить чужой каталог, случайно похожий на репозиторий.
+SELF="${BASH_SOURCE[0]:-}"
+HERE=""
+[ -n "${SELF}" ] && [ -f "${SELF}" ] && HERE="$(cd "$(dirname "${SELF}")" && pwd)"
+if [ -n "${HERE}" ] && [ -f "${HERE}/skills/${SKILL}/SKILL.md" ]; then
   SRC="${HERE}/skills/${SKILL}"
   echo "Ставлю из локальной копии: ${SRC}"
 else
