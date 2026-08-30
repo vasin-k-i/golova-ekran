@@ -203,6 +203,9 @@ def draft(pairs, results):
               '',
               'PANELS = {}          # инфографика: имя → dict(eyebrow=…, w1=…, w2=…, items=[…])',
               'INSERTS = []         # окна-вставки: dict(n=…, take=…, at=…, dur=…, lay=…, src=…, label=…)',
+              '',
+              '# Наезд за курсором на записи экрана — ищется сам, см. references/06-zoom.md',
+              "ZOOM = dict(max=1.35, rate=0.05, push=6.0, min_scene=3.0, moves=6, skip=[])",
               '']
     return "\n".join(lines)
 

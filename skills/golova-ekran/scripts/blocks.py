@@ -31,6 +31,8 @@ DUR = lib.read_json("ins/durations.json") if \
 if os.path.exists(f"{INS}/durations.json"):
     import json
     DUR = json.load(open(f"{INS}/durations.json", encoding="utf-8"))
+ZOOM = (lib.read_json("zoom.json")["blocks"]
+        if os.path.exists(os.path.join(W, "zoom.json")) else {})
 
 
 def box(name):
@@ -45,6 +47,30 @@ def head_chain(tag):
 def cover(w, h):
     return (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
             f"crop={w}:{h},setsar=1")
+
+
+def screen_chain(i, w, h):
+    """Экран в свою коробку — с наездом за курсором, если zoom.py его нашёл.
+
+    Наезд делает zoompan, а не crop: у crop ширина и высота считаются ОДИН раз
+    при сборке фильтра, меняются только x и y — то есть панорама есть, а
+    наезда нет. zoompan пересчитывает и рамку, и положение на каждом кадре
+    и сам отдаёт готовый размер коробки.
+
+    Время внутри выражений — `ot`, локальное время блока: каждый блок
+    рендерится своим вызовом ffmpeg со своим нулём.
+
+    tpad подстраховывает хвост: zoompan иногда не отдаёт последний кадр,
+    а число кадров блока прибито намертво.
+    """
+    z = ZOOM.get(str(i))
+    if not z:
+        return f"scale={w}:{h},setsar=1"
+    return ("tpad=stop_mode=clone:stop_duration=0.5,"
+            f"zoompan=z='{lib.pw_expr(z['z'], 'ot')}'"
+            f":x='clip(({lib.pw_expr(z['fx'], 'ot')})*iw-iw/zoom/2,0,iw-iw/zoom)'"
+            f":y='clip(({lib.pw_expr(z['fy'], 'ot')})*ih-ih/zoom/2,0,ih-ih/zoom)'"
+            f":d=1:fps={FPS}:s={w}x{h},setsar=1")
 
 
 def panel_states(name):
@@ -88,7 +114,7 @@ def build_block(i_blk):
         hx, hy, hw, hh, _ = box(f"{mode}_HEAD")
         low = mode.lower()
         g += ["[bg][2:v]overlay=0:0[bg2]",
-              f"[s2]scale={sw}:{sh},setsar=1[sc]",
+              f"[s2]{screen_chain(i, sw, sh)}[sc]",
               "[sc][3:v]alphamerge[sca]",
               f"[bg2][sca]overlay={sx}:{sy}[v0]",
               f"[0:v]{cover(hw, hh)}[hd]",

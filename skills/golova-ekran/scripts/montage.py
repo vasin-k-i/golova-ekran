@@ -10,10 +10,11 @@
   montage.py design                      маски, тени, панели инфографики
   montage.py inserts                     клипы вставок и плашки
   montage.py cut                         резка дорожек кадр в кадр
+  montage.py zoom                        наезд за курсором на записи экрана
   montage.py build [N ...]               сборка кадра (без номеров — все блоки)
   montage.py final                       звук и мастер
   montage.py cover                       обложка
-  montage.py all                         design → inserts → cut → build → final
+  montage.py all                         design → inserts → cut → zoom → build → final
 
 Конфиг ролика — project.py в текущей папке (или в GEK_PROJECT).
 """
@@ -74,14 +75,14 @@ def main():
     if cmd == "check":
         return check(rest)
     if cmd == "all":
-        for s in ("design", "inserts", "cut", "blocks", "final"):
+        for s in ("design", "inserts", "cut", "zoom", "blocks", "final"):
             print(f"\n═══ {s} ═══")
             run_step(s)
         return
     alias = {"build": "blocks"}
     step = alias.get(cmd, cmd)
     if step not in ("probe", "segments", "transcribe", "plan", "design",
-                    "inserts", "cut", "blocks", "final", "cover"):
+                    "inserts", "cut", "zoom", "blocks", "final", "cover"):
         print(__doc__)
         raise SystemExit(f"не знаю команду «{cmd}»")
     run_step(step, rest)
