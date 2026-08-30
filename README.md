@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/vasin-k-i/golova-ekran/main/install
 | | зачем | как поставить |
 |---|---|---|
 | ffmpeg | вся резка и сборка | `brew install ffmpeg` |
-| python3 + pillow + numpy | графика и синхронизация | `pip3 install pillow numpy` |
+| python3 + pillow + numpy | графика, синхронизация, наезд | `/usr/bin/pip3 install --user pillow numpy` |
 | whisper.cpp | поиск повторов и оговорок | `brew install whisper-cpp` |
 | модель `ggml-large-v3.bin` | к нему | [скачать](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin) |
 

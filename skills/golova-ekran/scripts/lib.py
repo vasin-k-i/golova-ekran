@@ -15,6 +15,40 @@ import sys
 FF = os.environ.get("FFMPEG", shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg")
 FP = os.environ.get("FFPROBE", shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe")
 
+_PY = None
+
+
+def pick_python():
+    """Интерпретатор, у которого РЕАЛЬНО есть pillow и numpy.
+
+    Верить `python3` из PATH нельзя. На маке первым обычно стоит
+    homebrew-овский, а пакетов в нём нет и не будет: он «externally managed»
+    и на `pip3 install` отвечает отказом. Зато системный /usr/bin/python3
+    часто уже укомплектован. Поэтому не гадаем, а проверяем импортом.
+
+    Пусто — значит pillow и numpy не нашлись нигде; ставить их надо в тот
+    python, который потом задать через GEK_PYTHON.
+    """
+    global _PY
+    if _PY is not None:
+        return _PY or None
+    env = os.environ.get("GEK_PYTHON")
+    names = ("python3", "python3.14", "python3.13", "python3.12",
+             "python3.11", "python3.10", "python3.9")
+    cands = [env, sys.executable] + [shutil.which(n) for n in names] + \
+            ["/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"]
+    seen = set()
+    for p in cands:
+        if not p or p in seen or not os.path.exists(p):
+            continue
+        seen.add(p)
+        if subprocess.run([p, "-c", "import PIL, numpy"],
+                          capture_output=True).returncode == 0:
+            _PY = p
+            return p
+    _PY = ""
+    return None
+
 
 # ── конфиг ──────────────────────────────────────────────────────────────────
 def project_dir():

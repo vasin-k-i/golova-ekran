@@ -27,7 +27,19 @@ sys.path.insert(0, HERE)
 
 
 def run_step(name, args=()):
-    r = subprocess.run([sys.executable, os.path.join(HERE, f"{name}.py"), *args])
+    """Шаги запускаем не тем, чем запустили нас.
+
+    Половина шагов тянет pillow и numpy, а `python3` из PATH на маке обычно
+    homebrew-овский, где их нет. Иначе пайплайн падает трейсбеком на импорте
+    вместо внятного «поставь вот это».
+    """
+    import lib
+    py = lib.pick_python()
+    if not py:
+        lib.die("не нашёл python с pillow и numpy. Поставь их "
+                "(`/usr/bin/pip3 install --user pillow numpy`) "
+                "или укажи нужный интерпретатор через GEK_PYTHON")
+    r = subprocess.run([py, os.path.join(HERE, f"{name}.py"), *args])
     if r.returncode:
         raise SystemExit(r.returncode)
 
