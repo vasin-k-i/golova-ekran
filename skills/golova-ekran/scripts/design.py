@@ -11,6 +11,7 @@
   H   голова в карточке сбоку, вторая половина кадра — под графику
   HC  голова крупнее, ближе к центру, графики мало
   S   экран окном на тёмной подложке + камера-прямоугольник в нижнем углу
+  SH  голова как в H, а на второй половине — запись экрана меньшим окном
   T   полноэкранная типографическая карточка, голос идёт дальше
 
 Голова всегда стоит НАПРОТИВ взгляда (FACE_SIDE / GAZE в project.py): кто
@@ -62,6 +63,9 @@ STUDIO_HEAD = {
     "S":  dict(box=(1534, 608, 330, 418, 26), head=0.47, eye=0.37),
 }
 S_BOX = (40, 66, 1580, 889, 18)            # окно экрана; камера заходит на его угол
+# SH: голова как в H, а вторая половина кадра — не пустая темнота, а запись экрана
+# меньшим окном; над окном заголовок, под окном плашки-факты
+SH_BOX = (60, 250, 1000, 562, 14)
 H_PANEL = (96, 190, 920, 700, 24)          # зона под панель в H
 H_CARD = (110, 330, 820, 462, 16)          # окно вставки в H
 CHIP_S = (36, 36)                          # плашки на экране: отступ от угла окна
@@ -69,6 +73,7 @@ CHIP_H = (0, 96)                           # плашки в H: над пане�
 HEAD_MAX = 0.9    # масштаб головы к исходному пикселю — потолок, вместе с наездом
 PUSH = 0.035      # медленный наезд внутри плана: 1.00 → 1.035
 CAM_MAX = 1.8     # потолок наезда на экран в S: дальше текст экрана мылится
+CAM_MAX_SH = 2.0  # в маленьком окне SH до 2× — это ещё не растяжение исходника
 
 M = os.path.join(lib.project_dir(), "masks")
 FB, FR = lib.font_path(True), lib.font_path(False)
@@ -212,23 +217,30 @@ def geometry():
         g[f"{tag}_CROP"] = crop
         g[f"{tag}_SCALE"] = scale
         notes[tag] = (scale, share, note)
+    g["SH_SCR"] = flip(fit(SH_BOX, ar, align="left"))
+    g["SH_HEAD"], g["SH_CROP"], g["SH_SCALE"] = g["H_HEAD"], g["H_CROP"], g["H_SCALE"]
     g["H_PANEL"] = flip(H_PANEL)
     g["H_CARD"] = flip(H_CARD)
     g["PUSH"], g["HEAD_MAX"], g["CAM_MAX"] = PUSH, HEAD_MAX, CAM_MAX
+    g["CAM_MAX_SH"] = CAM_MAX_SH
     # плашки: левый верхний угол картинки плашки (у неё 20 px прозрачного поля под тень)
     sx, sy = g["S_SCR"][0], g["S_SCR"][1]
     g["CHIP_S"] = (sx + CHIP_S[0] - 20, sy + CHIP_S[1] - 20)
     g["CHIP_H"] = (g["H_PANEL"][0] - 20, CHIP_H[1] - 20)
+    shx, shy, _, shh, _ = g["SH_SCR"]
+    g["CHIP_SH"] = (shx - 20, shy + shh + 30 - 20)   # под окном, в ряд
 
     # холст нормализованного экрана: с запасом под самую крупную раскладку
     bw, bh = g["B_SCR"][2], g["B_SCR"][3]
     k = max(1.0, 1500 / bw, 1056 / bh)
     used = used_modes()
-    scr_w = int(bw * k) if (used.keys() & {"A", "B"}) or "S" not in used else 0
-    if "S" in used:
-        # в S окно экрана само по себе крупное, а наезд идёт до CAM_MAX —
-        # берём всё, что есть в исходнике, но не больше, чем нужно наезду
-        scr_w = max(scr_w, min(screen_native_w(), int(g["S_SCR"][2] * CAM_MAX)))
+    scr_w = int(bw * k) if (used.keys() & {"A", "B"}) or not (used.keys() & {"S", "SH"}) else 0
+    if "S" in used or "SH" in used:
+        # окно экрана в S крупное, а в SH наезд идёт до 2× — берём всё, что есть
+        # в исходнике, но не больше, чем нужно наезду
+        need = max(int(g["S_SCR"][2] * CAM_MAX) if "S" in used else 0,
+                   int(g["SH_SCR"][2] * CAM_MAX_SH) if "SH" in used else 0)
+        scr_w = max(scr_w, min(screen_native_w(), need))
     g["SCR_W"] = scr_w // 2 * 2
     g["SCR_H"] = int(round(g["SCR_W"] / ar)) // 2 * 2
     for tag in ("A", "B", "H"):
@@ -578,6 +590,37 @@ def tcard(spec, name):
     return im
 
 
+def sh_header(spec, width, name):
+    """Заголовок над окном SH: моно-подпись капсом + крупная строка (w1 белым, w2 акцентом).
+
+    Ширина — ровно окно экрана; длинная строка ужимается и переносится,
+    за окно не выходит."""
+    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    where = f"заголовок SH «{name}»"
+    fe, le = fit_lines(tmp, (spec.get("eyebrow") or "").upper(), lib.font_mono(), 18,
+                       width - 24, where, max_lines=1, bold=False)
+    line = " ".join(x for x in (spec.get("w1"), spec.get("w2")) if x)
+    fl, ll = fit_lines(tmp, line, FB, 46, width, where, max_lines=2)
+    lh = int(fl.size * 1.12)
+    h = 34 + lh * len(ll) + 6
+    im = Image.new("RGBA", (width, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    if le[0]:
+        d.rounded_rectangle([2, 6, 12, 16], 2, fill=ORANGE)
+        text(d, (24, 0), le[0], fe, (146, 151, 161), bold=False)
+    y = 34
+    w1 = spec.get("w1") or ""
+    for ln in ll:
+        # акцентом — то, что относится к w2
+        if w1 and ln.startswith(w1) and spec.get("w2"):
+            x = text(d, (0, y), w1 + " ", fl, INK)
+            text(d, (x, y), ln[len(w1):].strip(), fl, ORANGE)
+        else:
+            text(d, (0, y), ln, fl, ORANGE if (spec.get("w2") and not ln.startswith(w1)) else INK)
+        y += lh
+    return im
+
+
 def main():
     os.makedirs(M, exist_ok=True)
     g, notes = geometry()
@@ -605,6 +648,12 @@ def main():
                 panel(spec, k, cw, ch, r, name, log=(k == n)) \
                     .save(f"{M}/panel_{name}{suffix}_{k}.png")
             total += n
+    for name in sorted(used.get("SH", ())):
+        spec = panels.get(name)
+        if spec is None:
+            lib.die(f"в MODES стоит заголовок SH «{name}», а в PANELS его нет")
+        sh_header(spec, g["SH_SCR"][2], name).save(f"{M}/shhead_{name}.png")
+        total += 1
     for name in sorted(used.get("T", ())):
         spec = panels.get(name)
         if spec is None:
@@ -613,7 +662,7 @@ def main():
         total += 1
     chips = getattr(P, "CHIPS", [])
     for i, c in enumerate(chips):
-        chip(c, 1100 if c.get("lay", "S") == "S" else 900, f"{M}/chip_{i:02d}.png")
+        chip(c, c.get("max_w", 1000), f"{M}/chip_{i:02d}.png")
 
     lib.write_json("geometry.json", {k: v for k, v in g.items()})
     print(f"голова {'вертикальная' if g['portrait'] else 'горизонтальная'} "
@@ -629,6 +678,8 @@ def main():
                   f"(с наездом {sc * (1 + PUSH):.2f}, потолок {HEAD_MAX}) · "
                   f"голова {share * 100:.0f} % высоты рамки{note}")
         print(f"  S : окно экрана {g['S_SCR'][:4]}")
+        print(f"  SH: голова как в H, окно экрана {g['SH_SCR'][:4]}, заголовок над ним, "
+              "плашки под ним")
         hp = g["H_PANEL"]
         print(f"  зона под графику в H: x {hp[0]}–{hp[0] + hp[2]}, y {hp[1]}–{hp[1] + hp[3]}")
     print(f"  холст экрана {g['SCR_W']}×{g['SCR_H']}")

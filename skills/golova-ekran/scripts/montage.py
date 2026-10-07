@@ -8,6 +8,7 @@
   montage.py transcribe                  расшифровка каждого сегмента отдельно
   montage.py repeats                     что режем дословно + кандидаты в повторы
   montage.py repeats --approve "кто, когда"   отметка: список согласован человеком
+  montage.py screenmap                   что на экране, пока он говорит: фраза → кадр
   montage.py plan                        что режем и чем оформляем
   montage.py design                      маски, тени, панели инфографики
   montage.py inserts                     клипы вставок и плашки
@@ -107,7 +108,7 @@ def main():
         return run_step("compose", ["--preview", *rest])
     alias = {"build": "blocks"}
     step = alias.get(cmd, cmd)
-    if step not in ("probe", "segments", "transcribe", "repeats", "plan", "design",
+    if step not in ("probe", "segments", "transcribe", "repeats", "screenmap", "plan", "design",
                     "inserts", "cut", "zoom", "gfx", "matte", "blocks", "final",
                     "frames", "cover"):
         print(__doc__)

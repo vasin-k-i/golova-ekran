@@ -104,6 +104,7 @@ def pick_gain():
 
 SR = 48000
 SFX_KIT = dict(whoosh=("whoosh-short.mp3", -21.0), whoosh_big=("whoosh-cinematic.mp3", -19.0),
+               whoosh_soft=("whoosh-short.mp3", -26.0),
                impact=("impact-bass-1.mp3", -21.0), click=("click-soft.mp3", -24.0))
 SFX_DIRS = ["~/.claude/skills/hyperframes-media/assets/sfx",
             "~/.codex/skills/hyperframes-media/assets/sfx"]

@@ -173,7 +173,8 @@ def cam_keys(block, cams):
     и та же функция ведёт и zoompan в A/B, и композитор в S.
     """
     o = block["a"]
-    cmax = float(G.get("CAM_MAX", 1.8))
+    # в маленьком окне SH до 2× — это ещё родные пиксели записи, не растяжение
+    cmax = float(G.get("CAM_MAX_SH", 2.0) if block["m"] == "SH" else G.get("CAM_MAX", 1.8))
     zk, xk, yk = [[0.0, 1.0]], [[0.0, 0.5]], [[0.0, 0.5]]
     notes = []
     for c in cams:
@@ -279,7 +280,7 @@ def main():
     freezes = PL.get("freezes", [])
     out, total = {}, 0.0
     for i, b in enumerate(blocks):
-        if b["m"] not in ("A", "B", "S") or i in SKIP:
+        if b["m"] not in lib.SCREEN_MODES or i in SKIP:
             continue
         mine = [c for c in cams if b["a"] - 1e-6 <= c["t"] < b["b"]]
         frz = [f for f in freezes if f["block"] == i]

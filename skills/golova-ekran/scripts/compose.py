@@ -2,7 +2,7 @@
 """Композитор раскладок студии (H, HC, S, T) — кадр за кадром, на питоне.
 
 Классические раскладки A/B/C/D собирает ffmpeg (blocks.py), и там это
-правильно: коробки стоят на месте. В студии коробки ЕЗДЯТ — карточка головы
+правильно: коробки стоят на месте. Здесь — H, SH, HC, S, T. В студии коробки ЕЗДЯТ — карточка головы
 перестраивается за 0,7 с, экран въезжает окном, камера плавно наезжает
 по ключам, поверх идёт графика со своей альфой и маска человека. В фильтрах
 ffmpeg такое не собрать без километра выражений, а на питоне это сто строк.
@@ -101,12 +101,17 @@ def push(crop, k):
 
 
 def base_state(i, t):
+    """Состояние блока без перестроения. Медленный наезд на голову считается по
+    всему плану (run): H и SH подряд — один план, наезд через них не сбрасывается."""
     b = BLOCKS[i]
     m = b["m"]
     box = G[f"{m}_HEAD"]
-    k = clamp((t - b["a"]) / max(1e-3, b["b"] - b["a"]))
+    ra, rb = b.get("run", [b["a"], b["b"]])
+    k = clamp((t - ra) / max(1e-3, rb - ra))
+    scr = m in ("S", "SH")
     return dict(card=tuple(box[:4]), r=box[4], crop=push(crop_of(m), k),
-                scr=1.0 if m == "S" else 0.0, sblock=i if m == "S" else None)
+                scr=1.0 if scr else 0.0, sblock=i if scr else None,
+                srect=tuple(G[f"{m}_SCR"]) if scr else None)
 
 
 def mix(s0, s1, p):
@@ -115,6 +120,12 @@ def mix(s0, s1, p):
                crop=tuple(lib.lerp(a, b, p) for a, b in zip(s0["crop"], s1["crop"])),
                scr=lib.lerp(s0["scr"], s1["scr"], p))
     out["sblock"] = s1["sblock"] if s1["sblock"] is not None else s0["sblock"]
+    # S → SH: окно не исчезает, а уменьшается из большого в малое
+    if s0["srect"] and s1["srect"]:
+        out["srect"] = tuple(lib.lerp(a, b, p) for a, b in zip(s0["srect"], s1["srect"]))
+        out["morph_scr"] = True
+    else:
+        out["srect"] = s1["srect"] or s0["srect"]
     return out
 
 
@@ -447,13 +458,14 @@ def render(f, head, scr):
     hcard = None
     if st is not None:
         # окно экрана
-        if st["scr"] > 0.005:
+        if st["scr"] > 0.005 and st.get("srect"):
             on = st["scr"]
-            x, y, w, h, r = G["S_SCR"]
+            x, y, w, h, r = st["srect"]
             sc = lib.lerp(0.94, 1.0, on)
             w2, h2 = int(round(w * sc)) // 2 * 2, int(round(h * sc)) // 2 * 2
             x2 = int(round(x + (w - w2) / 2))
-            y2 = int(round(y + (h - h2) / 2 + (1 - on) * 140))
+            # окно въезжает снизу и проявляется; маленькому — сдвиг поменьше
+            y2 = int(round(y + (h - h2) / 2 + (1 - on) * min(140, h * 0.16)))
             sb = st["sblock"]
             frame = scr
             for fr in PL.get("freezes", []):
@@ -477,6 +489,17 @@ def render(f, head, scr):
         hbuf = grade(head.resize((w, h), Image.BICUBIC, box=(cx0, cy0, cx0 + cw, cy0 + ch)))
         card(canvas, hbuf, x, y, st["r"])
         hcard = (hbuf, x, y, st["r"], (cx0, cy0, cw, ch))
+
+    # заголовок над окном SH: моно-подпись + крупная строка, проявляется после перестроения
+    if blk["m"] == "SH" and blk.get("head_t") and st is not None and st.get("srect"):
+        t_in, t_out = blk["head_t"]
+        if t_in <= t < t_out + 0.3:
+            im = png(f"{M}/shhead_{blk['panel']}.png")
+            if im is not None:
+                a = lib.ease_out((t - t_in) / 0.4) * (1 - clamp((t - t_out) / 0.3))
+                sx, sy = int(st["srect"][0]), int(st["srect"][1])
+                dy = int((1 - lib.ease_out((t - t_in) / 0.4)) * 16)
+                canvas.paste(im, (sx, sy - im.height - 14 + dy), scaled(im.getchannel("A"), a))
 
     # вставка в H занимает место панели — панель на это время уходит
     hide = 0.0
@@ -519,7 +542,7 @@ def render(f, head, scr):
 
     # плашки-подписи: всплывают за 0,3 с, уходят за 0,25 с
     live = [c for c in PL.get("chips", []) if c["a"] <= t < c["b"] + 0.25]
-    yoff = 0
+    yoff = xoff = 0
     for c in live:
         im = png(f"{M}/chip_{c['i']:02d}.png")
         if im is None:
@@ -528,9 +551,15 @@ def render(f, head, scr):
         pout = clamp((t - c["b"]) / 0.25)
         a = pin * (1 - pout)
         s = lib.lerp(0.86, 1.0, pin)
-        cx, cy = G["CHIP_S"] if c["m"] == "S" else G["CHIP_H"]
         im2 = im if s > 0.995 else im.resize((max(1, int(im.width * s)),
                                               max(1, int(im.height * s))), Image.BICUBIC)
+        if c["m"] == "SH":
+            # под окном SH плашки-факты идут в ряд
+            cx, cy = G["CHIP_SH"]
+            canvas.paste(im2, (cx + xoff, cy - int(10 * pout)), scaled(im2.getchannel("A"), a))
+            xoff += im.width - 28
+            continue
+        cx, cy = G["CHIP_S"] if c["m"] == "S" else G["CHIP_H"]
         canvas.paste(im2, (cx, cy + yoff - int(10 * pout)), scaled(im2.getchannel("A"), a))
         yoff += im.height - 30
 
@@ -540,7 +569,7 @@ def render(f, head, scr):
         canvas = ImageOps.grayscale(canvas).convert("RGB")
         pl = png(f"{M}/bw_plaque.png")
         if pl is not None:
-            bx = G["S_SCR"][0] + 24 if blk["m"] == "S" else G["H_PANEL"][0]
+            bx = G[f"{blk['m']}_SCR"][0] + 24 if blk["m"] in ("S", "SH") else G["H_PANEL"][0]
             canvas.paste(pl, (bx, 900), pl)
 
     # графика за человеком → человек по маске → графика спереди

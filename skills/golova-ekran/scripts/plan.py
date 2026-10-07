@@ -61,6 +61,53 @@ MORPH = float(getattr(P, "MORPH", 0.7))   # перестроение раскл�
 PANEL_OUT = 0.35                          # панель уходит раньше конца блока
 
 
+HC_MAX = float(getattr(P, "HC_MAX", 4.0))    # HC — короткий акцент, не дольше
+HC_HOLD = 3.0                                # сколько держим акцент, если план длиннее
+
+
+def no_empty_zones(blocks, keeps, src_to_out):
+    """Две правки по пробе — поведение по умолчанию.
+
+    1. HC (голова по центру на тёмном) — только акцент на ключевой фразе, 2–4 с.
+       Дольше — зритель видит голову посреди черноты и не понимает зачем, а
+       запись экрана простаивает. Длинный HC режем: акцент HC_HOLD секунд
+       (до ближайшего конца фразы), дальше SH, если у дубля есть экран, иначе H.
+    2. Пустых тёмных зон не бывает: H без панели и без графики на второй
+       половине кадра превращается в SH — там идёт запись экрана меньшим окном.
+    """
+    takes = {t["id"]: t for t in P.TAKES}
+    gfx_at = [src_to_out(x["take"], x["at"]) for x in getattr(P, "GFX", [])]
+    ends = []
+    acc = 0.0
+    for k in keeps:
+        acc += k["d"]
+        ends.append(round(acc, 4))
+    out = []
+    for b in blocks:
+        has_scr = bool(takes.get(b.get("take"), {}).get("screen"))
+        if b["m"] == "HC" and b["b"] - b["a"] > HC_MAX:
+            cut = next((e for e in ends if b["a"] + 2.0 <= e <= b["a"] + HC_MAX),
+                       b["a"] + HC_HOLD)
+            nxt = "SH" if has_scr else "H"
+            print(f"   ! HC {lib.ms(b['a'])} длиной {b['b'] - b['a']:.1f} с — это не акцент: "
+                  f"держу {cut - b['a']:.1f} с, дальше {nxt}")
+            out.append(dict(b, b=round(cut, 4)))
+            out.append(dict(b, a=round(cut, 4), m=nxt, panel=None))
+            continue
+        if b["m"] == "H" and not b.get("panel") and has_scr and \
+                not any(b["a"] - 0.3 <= g < b["b"] for g in gfx_at):
+            print(f"   · H {lib.ms(b['a'])} без панели и графики — пустая половина кадра, "
+                  "ставлю SH: запись экрана меньшим окном")
+            out.append(dict(b, m="SH"))
+            continue
+        if b["m"] == "H" and not b.get("panel") and not has_scr and \
+                not any(b["a"] - 0.3 <= g < b["b"] for g in gfx_at):
+            print(f"   ! H {lib.ms(b['a'])} без панели и графики, а экрана у дубля нет — "
+                  "половина кадра пустая: дай панель или графику")
+        out.append(b)
+    return out
+
+
 def studio_links(blocks):
     """Кто из блоков студии с чего перестраивается.
 
@@ -68,6 +115,15 @@ def studio_links(blocks):
     ложится поверх кадра и в цепочку не входит: после неё следующий план
     перестраивается из того, что было ДО карточки.
     """
+    # медленный наезд на голову идёт непрерывно через H↔SH: голова там не двигается
+    for i, b in enumerate(blocks):
+        j = i
+        while j > 0 and lib.head_group(blocks[j - 1]["m"]) == lib.head_group(b["m"]):
+            j -= 1
+        k = i
+        while k + 1 < len(blocks) and lib.head_group(blocks[k + 1]["m"]) == lib.head_group(b["m"]):
+            k += 1
+        b["run"] = [blocks[j]["a"], blocks[k]["b"]]
     prev = None                     # последний блок студии не-T
     for i, b in enumerate(blocks):
         b["studio"] = b["m"] in lib.STUDIO
@@ -82,6 +138,9 @@ def studio_links(blocks):
                                  blocks[i - 1]["m"] == "T"):
             b["from"] = prev
         prev = i
+        if b["m"] == "SH" and b.get("panel"):
+            t_in = b["a"] + (MORPH if b["from"] is not None else 0.0) + 0.1
+            b["head_t"] = [round(t_in, 3), round(max(t_in + 0.5, b["b"] - 0.3), 3)]
         if b["m"] == "H" and b.get("panel"):
             t_in = b["a"] + (MORPH if b["from"] is not None else 0.0) + 0.15
             t_out = max(t_in + 0.5, b["b"] - PANEL_OUT)
@@ -117,9 +176,9 @@ def timed_things(src_to_out, blocks, total):
         frame = rest["frame"] if isinstance(rest, dict) else rest[0]
         a = src_to_out(take, at)
         i = block_at(blocks, a)
-        if blocks[i]["m"] != "S":
+        if blocks[i]["m"] not in ("S", "SH"):
             print(f"   ! стоп-кадр {take}@{at} попал в блок {blocks[i]['m']}, "
-                  "а держат его только в S — пропускаю")
+                  "а держат его только в S и SH — пропускаю")
             continue
         # держим до конца куска: обратно в живую запись наплывом не возвращаемся
         out["freezes"].append(dict(a=a, b=blocks[i]["b"], take=take,
@@ -170,6 +229,8 @@ def timed_things(src_to_out, blocks, total):
             if b["m"] == "T":
                 ev.append([round(b["a"] - 0.05, 3), "whoosh_big"])
                 ev.append([round(b["a"] + 0.3, 3), "impact"])
+            elif b["studio"] and lib.head_group(b["m"]) == lib.head_group(blocks[i - 1]["m"]):
+                ev.append([round(b["a"] - 0.1, 3), "whoosh_soft"])   # H↔SH: только зона сбоку
             elif b["studio"]:
                 ev.append([round(b["a"] - 0.12, 3), "whoosh"])
         for t in (b.get("panel_t") or [0, 0, []])[2]:
@@ -190,7 +251,9 @@ def rhythm(blocks, total):
     на каждой склейке под это правило не подпадает — он запрещён вовсе:
     1.0↔1.13 на каждой из 575 склеек читался как дёрганая камера.
     """
-    ch = [b["a"] for i, b in enumerate(blocks) if i and b["m"] != blocks[i - 1]["m"]]
+    # H↔SH — не смена плана: голова на месте, меняется только содержимое зоны сбоку
+    ch = [b["a"] for i, b in enumerate(blocks)
+          if i and lib.head_group(b["m"]) != lib.head_group(blocks[i - 1]["m"])]
     mins = max(total / 60.0, 1e-6)
     worst = max([sum(1 for y in ch if x <= y < x + 60) for x in ch] or [0])
     if total < 60:
@@ -200,12 +263,19 @@ def rhythm(blocks, total):
           f"{len(ch) / mins:.1f} в минуту, в самую плотную минуту {worst}{flag}")
     for i, b in enumerate(blocks):
         d = b["b"] - b["a"]
+        if b["m"] == "HC" and not 1.5 <= d <= HC_MAX:
+            print(f"   ! HC {lib.ms(b['a'])} держится {d:.1f} с — акцент на ключевой фразе, 2–4 с")
         if b["m"] == "T" and not 1.2 <= d <= 4.0:
             print(f"   ! карточка T {lib.ms(b['a'])} висит {d:.1f} с — держи 1,5–3 с")
-        elif b["m"] != "T" and d < 12 and 0 < i < len(blocks) - 1 \
-                and blocks[i - 1]["m"] != "T" and blocks[i + 1]["m"] != "T":
-            print(f"   ! план {b['m']} {lib.ms(b['a'])} всего {d:.1f} с — "
-                  "смена плана реже раза в 12–15 с")
+        elif b["m"] not in ("T", "HC") and 0 < i < len(blocks) - 1 \
+                and lib.head_group(blocks[i - 1]["m"]) != lib.head_group(b["m"]):
+            run = b["run"][1] - b["run"][0]       # H и SH подряд — один план
+            nxt = next((x for x in blocks[i + 1:]
+                        if lib.head_group(x["m"]) != lib.head_group(b["m"])), None)
+            if run < 12 and blocks[i - 1]["m"] not in ("T", "HC") and \
+                    (nxt is None or nxt["m"] not in ("T", "HC")):
+                print(f"   ! план {b['m']} {lib.ms(b['a'])} всего {run:.1f} с — "
+                      "смена плана реже раза в 12–15 с")
 
 
 def main():
@@ -247,12 +317,13 @@ def main():
                         f"{', '.join(lib.CLASSIC + lib.STUDIO)}")
             oa, ob = src_to_out(t["id"], a), src_to_out(t["id"], b)
             if ob - oa > 0.2:
-                blocks.append(dict(a=oa, b=ob, m=mode, panel=panel))
+                blocks.append(dict(a=oa, b=ob, m=mode, panel=panel, take=t["id"]))
     blocks.sort(key=lambda x: x["a"])
     for i in range(len(blocks) - 1):
         blocks[i]["b"] = blocks[i + 1]["a"]
     blocks[0]["a"] = 0.0
     blocks[-1]["b"] = total
+    blocks = no_empty_zones(blocks, keeps, src_to_out)
     studio_links(blocks)
 
     ins = []

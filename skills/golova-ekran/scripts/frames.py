@@ -74,7 +74,8 @@ def main():
     ch = []
     for i, b in enumerate(blocks):
         if i and b["m"] != blocks[i - 1]["m"]:
-            tag = f"{blocks[i - 1]['m']}→{b['m']}"
+            same = lib.head_group(b["m"]) == lib.head_group(blocks[i - 1]["m"])
+            tag = f"{blocks[i - 1]['m']}→{b['m']}" + (" (зона сбоку)" if same else "")
             ch += [(b["a"] - 0.3, f"{tag} до"), (b["a"] + morph / 2, f"{tag} перестроение"),
                    (b["a"] + morph + 0.3, f"{tag} после")]
     cams = []
@@ -105,7 +106,7 @@ def main():
     if ov:
         os.replace(os.path.join(OUT, "overview_01.jpg"), os.path.join(OUT, "overview.jpg"))
         made[-1] = os.path.join(OUT, "overview.jpg")
-    print(f"с {os.path.basename(src)}: смен плана {len(ch) // 3}, наездов и стоп-кадров "
+    print(f"с {os.path.basename(src)}: переходов {len(ch) // 3}, наездов и стоп-кадров "
           f"{len(cams)} кадров")
     for p in made:
         print(f"  {p}")
