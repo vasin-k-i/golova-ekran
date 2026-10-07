@@ -170,7 +170,7 @@ def repeats_state(P):
         return False, "✗ проход по повторам НЕ отмечен"
     with open(p, encoding="utf-8") as fh:
         d = json.load(fh)
-    if d.get("key") != repeats_key(P):
+    if d.get("cut_hash") != repeats_key(P):
         return False, ("✗ отметка устарела: после согласования поменялись "
                        "DROP/TRIM/BW или резка тишины — согласуй список заново")
     return True, f"✓ проход по повторам согласован: {d.get('note')} ({d.get('date')})"
@@ -179,7 +179,8 @@ def repeats_state(P):
 def write_repeats_ok(P, note):
     import time
     with open(os.path.join(project_dir(), REPEATS_FILE), "w", encoding="utf-8") as fh:
-        json.dump(dict(key=repeats_key(P), note=note,
+        # поле не «key»: gitleaks принимает «key» рядом с хэшем за API-ключ
+        json.dump(dict(cut_hash=repeats_key(P), note=note,
                        date=time.strftime("%Y-%m-%d %H:%M")), fh, ensure_ascii=False)
 
 
