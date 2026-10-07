@@ -23,6 +23,14 @@
 Анализируем work/scr_cut.mp4 — экран УЖЕ нарезанный, то есть в таймкодах
 готового ролика. Пересчитывать вырезы не нужно: что нашли, то и есть время
 внутри блока.
+
+Камера по ключам (CAM в project.py). Автонаезд хорош там, где на экране
+работают руками. Когда человек РАССКАЗЫВАЕТ про цифру на графике, нужен
+другой наезд: быстро (0,6–1,0 с, easeInOut) туда, о чём речь, держать,
+пока говорит, и выехать. Такие места ставятся ключами: (дубль, секунда,
+зум, x, y). Блок с ключами берёт только ключи, автонаезд в нём молчит.
+Стоп-кадр (FREEZE) — то же самое: живой записи там нет, ездим камерой
+по замершему кадру, и автонаезд, посчитанный по живой записи, туда не ставим.
 """
 import os
 import subprocess
@@ -158,7 +166,42 @@ def zmax_for(mode):
     return round(min(ZMAX, G["SCR_W"] / bw, G["SCR_H"] / bh), 3)
 
 
-def keys_for(block, scs, S):
+def cam_keys(block, cams):
+    """Камера по ключам: каждый ключ — переезд за dur с easeInOut и удержание.
+
+    Узлы те же, что у автонаезда (smoothstep между соседними), поэтому одна
+    и та же функция ведёт и zoompan в A/B, и композитор в S.
+    """
+    o = block["a"]
+    cmax = float(G.get("CAM_MAX", 1.8))
+    zk, xk, yk = [[0.0, 1.0]], [[0.0, 0.5]], [[0.0, 0.5]]
+    notes = []
+    for c in cams:
+        z = min(cmax, max(1.0, c["z"]))
+        if c["z"] > cmax:
+            notes.append(f"z {c['z']} срезан до {cmax}: дальше текст экрана мылится")
+        bw = G[f"{block['m']}_SCR"][2]
+        if z * bw > G["SCR_W"] * 1.02:
+            notes.append(f"{lib.ms(c['t'])} z {z:.2f} растягивает экран "
+                         f"в {z * bw / G['SCR_W']:.2f} раза — мелкий текст помылится")
+        t0 = round(max(0.0, c["t"] - o), 3)
+        if c["dur"] <= 0.05:
+            # мгновенный сброс: ставится ровно на смену картинки (стоп-кадр,
+            # переход на другую страницу) и потому не читается как рывок
+            t0, t1 = round(max(0.0, t0 - 0.002), 3), t0
+        else:
+            t1 = round(t0 + max(0.3, c["dur"]), 3)
+        for tr, v in ((zk, z), (xk, c["x"]), (yk, c["y"])):
+            prev = tr[-1][1]
+            if t0 <= tr[-1][0]:
+                t0 = round(tr[-1][0] + 0.001, 3)
+                t1 = max(t1, round(t0 + 0.001, 3))
+            tr.append([t0, prev])
+            tr.append([t1, round(v, 4)])
+    return (zk, xk, yk), notes
+
+
+def keys_for(block, scs, S, freezes=()):
     """Узлы наезда в локальном времени блока."""
     zmax = zmax_for(block["m"])
     moves = []
@@ -181,6 +224,9 @@ def keys_for(block, scs, S):
         if z1 < 1.02:
             continue
         moves.append(dict(a=a, b=b, dur=dur, pdur=pdur, z=z1, c0=c0, c1=c1))
+    # на стоп-кадре живой записи нет — автонаезд, посчитанный по ней, туда не ставим
+    moves = [m for m in moves
+             if not any(m["b"] > f["a"] and m["a"] < f["b"] for f in freezes)]
     moves.sort(key=lambda m: -m["dur"])
     moves = sorted(moves[:MAX_MOVES], key=lambda m: m["a"])
 
@@ -210,7 +256,8 @@ def keys_for(block, scs, S):
 # ── ход ─────────────────────────────────────────────────────────────────────
 def main():
     blocks = PL["blocks"]
-    if Z is None or ZRATE <= 0:
+    auto = not (Z is None or ZRATE <= 0)
+    if not auto and not PL.get("cams"):
         lib.write_json("zoom.json", dict(blocks={}))
         print("наезд выключен (ZOOM = None в project.py) — экран показываем целиком")
         return
@@ -221,15 +268,36 @@ def main():
         print("записи экрана нет ни у одного дубля — наезжать не на что")
         return
 
-    S = samples()
-    print(f"· разобрал {len(S)} выборок ({RATE}/с), "
-          f"смен картинки {sum(1 for s in S if s['spread'] >= BIG)}")
+    S = samples() if auto else []
+    if auto:
+        print(f"· разобрал {len(S)} выборок ({RATE}/с), "
+              f"смен картинки {sum(1 for s in S if s['spread'] >= BIG)}")
+    else:
+        print("· автонаезд выключен (ZOOM = None) — ставлю только камеру по ключам")
 
+    cams = PL.get("cams", [])
+    freezes = PL.get("freezes", [])
     out, total = {}, 0.0
     for i, b in enumerate(blocks):
-        if b["m"] not in ("A", "B") or i in SKIP:
+        if b["m"] not in ("A", "B", "S") or i in SKIP:
             continue
-        moves, (zk, xk, yk) = keys_for(b, scenes_of(b, S), S)
+        mine = [c for c in cams if b["a"] - 1e-6 <= c["t"] < b["b"]]
+        frz = [f for f in freezes if f["block"] == i]
+        if mine:
+            (zk, xk, yk), notes = cam_keys(b, mine)
+            out[str(i)] = dict(z=zk, fx=xk, fy=yk, manual=True)
+            total += b["b"] - b["a"]
+            print(f"  блок {i:02d} {b['m']}  камера по ключам: {len(mine)}"
+                  + (f" · стоп-кадр с {lib.ms(frz[0]['a'])}" if frz else ""))
+            for c in mine:
+                print(f"     {lib.ms(c['t'])}  z {c['z']:.2f}  центр {c['x']:.2f}/{c['y']:.2f}"
+                      f"  за {c['dur']:.1f} с")
+            for n in notes:
+                print(f"     ! {n}")
+            continue
+        if not auto:
+            continue
+        moves, (zk, xk, yk) = keys_for(b, scenes_of(b, S), S, frz)
         if not zk:
             continue
         out[str(i)] = dict(z=zk, fx=xk, fy=yk)

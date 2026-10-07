@@ -8,10 +8,17 @@
 Границы блоков считаем В КАДРАХ и жёстко задаём -frames:v. Иначе каждый блок
 округляется вверх на кадр-другой, за полтора десятка блоков набегает полсекунды,
 и к финалу губа уезжает от звука.
+
+Блоки студии (H, HC, S, T) рисует композитор compose.py. Он считает кадр на
+питоне, поэтому длинный блок режется на куски по ~10 с, и куски идут в
+несколько процессов сразу (GEK_JOBS, по умолчанию до 6). Кадры читаются
+подряд через трубу ffmpeg — один поиск на кусок, а не на каждый кадр.
 """
 import glob
 import os
+import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import lib
@@ -74,8 +81,12 @@ def screen_chain(i, w, h):
 
 
 def panel_states(name):
-    fs = sorted(glob.glob(f"{M}/panel_{name}_*.png"),
-                key=lambda p: int(p.rsplit("_", 1)[1][:-4]))
+    # panel_<имя>_<k>.png — для D; panel_<имя>_h_<k>.png (панель в H) сюда не берём
+    import re
+    pat = re.compile(rf"panel_{re.escape(name)}_(\d+)\.png$")
+    fs = sorted((p for p in glob.glob(f"{M}/panel_{name}_*.png")
+                 if pat.search(os.path.basename(p))),
+                key=lambda p: int(pat.search(os.path.basename(p)).group(1)))
     if not fs:
         lib.die(f"нет картинок панели «{name}» — проверь PANELS в project.py")
     return fs
@@ -177,9 +188,91 @@ def build_block(i_blk):
     g.append(f"[{cur}]format=yuv420p[vout]")
     cmd += ["-filter_complex", ";".join(g), "-map", "[vout]", "-frames:v", str(nf),
             "-fps_mode", "cfr", "-r", str(FPS), "-c:v", "libx264",
-            "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", out]
+            "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+            # те же метки цвета, что у блоков студии: склейка без перекодирования
+            # берёт параметры потока из первого файла
+            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+            "-color_range", "tv", out]
     lib.run(cmd)
     return i, mode, blk.get("panel"), nf, lib.nframes(out), [x["n"] for x in ins]
+
+
+PART = 300          # кадров в куске студии: ~10 с при 30 fps
+
+
+def build_studio(todo):
+    """Блоки студии: режем на куски, гоним в несколько процессов, склеиваем.
+
+    Каждый кусок — отдельный процесс compose.py со своим чтением кадров через
+    ffmpeg. Процессы, а не потоки: кадр собирается на питоне, и в одном
+    процессе потоки упираются в GIL.
+    """
+    for i, b in todo:
+        for x in PL["inserts"]:
+            if b["a"] - 0.001 <= x["a"] < b["b"] and (b["m"] != "H" or x["lay"] != "H"):
+                lib.die(f"вставка {x['n']} (lay={x['lay']}) попала в блок {b['m']}: "
+                        "в студии вставки ставятся только в H с lay=\"H\" — "
+                        "сдвинь at или раскладку")
+    jobs = int(os.environ.get("GEK_JOBS", "0")) or max(1, min(6, (os.cpu_count() or 4) // 2))
+    parts = []
+    for i, b in todo:
+        fa, fb = int(round(b["a"] * FPS)), int(round(b["b"] * FPS))
+        n = max(1, round((fb - fa) / PART))
+        for k in range(n):
+            f0 = fa + (fb - fa) * k // n
+            f1 = fa + (fb - fa) * (k + 1) // n
+            parts.append((i, k, f0, f1, f"{BLK}/{i:03d}_p{k:02d}.mp4"))
+    py = sys.executable
+    here = os.path.dirname(os.path.abspath(__file__))
+    t0 = time.time()
+    run, done, stats = [], 0, []
+    queue = sorted(parts, key=lambda p: -(p[3] - p[2]))
+    print(f"  студия: {len(todo)} блок(ов), {sum(p[3] - p[2] for p in parts)} кадров, "
+          f"{len(parts)} кусков в {jobs} процесса(ов)")
+    while queue or run:
+        while queue and len(run) < jobs:
+            i, k, f0, f1, out = queue.pop(0)
+            pr = subprocess.Popen([py, os.path.join(here, "compose.py"), "--part",
+                                   str(i), str(f0), str(f1), out],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  stdin=subprocess.DEVNULL, text=True)
+            run.append((pr, (i, k, f0, f1, out)))
+        time.sleep(0.2)
+        for pr, meta in list(run):
+            if pr.poll() is None:
+                continue
+            run.remove((pr, meta))
+            so, se = pr.communicate()
+            if pr.returncode:
+                for p2, _ in run:
+                    p2.kill()
+                sys.stderr.write(se[-3000:])
+                lib.die(f"кусок {meta[1]} блока {meta[0]} не собрался")
+            n, dt = so.strip().split()[-2:]
+            stats.append((int(n), float(dt)))
+            done += 1
+    wall = time.time() - t0
+    frames = sum(n for n, _ in stats)
+    per = frames / max(1e-6, sum(dt for _, dt in stats))
+    print(f"  студия собрана за {wall:.0f} с: {frames / max(wall, 1e-6):.1f} кадр/с всего, "
+          f"{per:.1f} кадр/с на процесс")
+
+    res = []
+    for i, b in todo:
+        mine = sorted(p for p in parts if p[0] == i)
+        lst = f"{BLK}/{i:03d}_parts.txt"
+        with open(lst, "w") as fh:
+            for p in mine:
+                fh.write(f"file '{os.path.basename(p[4])}'\n")
+        out = f"{BLK}/{i:03d}.mp4"
+        lib.run([lib.FF, "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                 "-i", lst, "-c", "copy", out])
+        for p in mine:
+            os.remove(p[4])
+        os.remove(lst)
+        fa, fb = int(round(b["a"] * FPS)), int(round(b["b"] * FPS))
+        res.append((i, b["m"], b.get("panel"), fb - fa, lib.nframes(out), []))
+    return res
 
 
 def main():
@@ -194,8 +287,12 @@ def main():
 
     only = {int(x) for x in sys.argv[1:] if x.isdigit()}
     todo = [(i, b) for i, b in enumerate(blocks) if not only or i in only]
+    classic = [x for x in todo if x[1]["m"] not in lib.STUDIO]
+    studio = [x for x in todo if x[1]["m"] in lib.STUDIO]
     with ThreadPoolExecutor(max_workers=3) as ex:
-        res = sorted(ex.map(build_block, todo))
+        res = sorted(ex.map(build_block, classic))
+    if studio:
+        res = sorted(res + build_studio(studio))
     if only:
         res = [next((r for r in res if r[0] == i),
                     (i, blocks[i]["m"], blocks[i].get("panel"), 0,

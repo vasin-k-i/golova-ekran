@@ -10,11 +10,16 @@
   montage.py design                      маски, тени, панели инфографики
   montage.py inserts                     клипы вставок и плашки
   montage.py cut                         резка дорожек кадр в кадр
-  montage.py zoom                        наезд за курсором на записи экрана
+  montage.py zoom                        наезд за курсором и камера по ключам на экране
+  montage.py gfx [ID ...]                графика HyperFrames (необязательно, нужен node ≥ 22)
+  montage.py matte                       маска человека под «текст за головой» (необязательно)
+  montage.py preview 12.5,40             контрольные кадры студии до сборки → work/check/
   montage.py build [N ...]               сборка кадра (без номеров — все блоки)
-  montage.py final                       звук и мастер
+  montage.py final                       звук (+ музыка и SFX, если заданы) и мастер
+  montage.py frames                      сетки кадров на каждой смене плана и наезде
   montage.py cover                       обложка
-  montage.py all                         design → inserts → cut → zoom → build → final
+  montage.py all                         design → inserts → cut → zoom → gfx → matte →
+                                         build → final → frames
 
 Конфиг ролика — project.py в текущей папке (или в GEK_PROJECT).
 """
@@ -87,14 +92,18 @@ def main():
     if cmd == "check":
         return check(rest)
     if cmd == "all":
-        for s in ("design", "inserts", "cut", "zoom", "blocks", "final"):
-            print(f"\n═══ {s} ═══")
+        for s in ("design", "inserts", "cut", "zoom", "gfx", "matte", "blocks",
+                  "final", "frames"):
+            print(f"\n═══ {s} ═══", flush=True)
             run_step(s)
         return
+    if cmd == "preview":
+        return run_step("compose", ["--preview", *rest])
     alias = {"build": "blocks"}
     step = alias.get(cmd, cmd)
     if step not in ("probe", "segments", "transcribe", "plan", "design",
-                    "inserts", "cut", "zoom", "blocks", "final", "cover"):
+                    "inserts", "cut", "zoom", "gfx", "matte", "blocks", "final",
+                    "frames", "cover"):
         print(__doc__)
         raise SystemExit(f"не знаю команду «{cmd}»")
     run_step(step, rest)

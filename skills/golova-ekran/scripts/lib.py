@@ -175,6 +175,112 @@ def pw_expr(keys, var="t"):
     return e
 
 
+def pw(keys, t):
+    """То же, что pw_expr, но для питона: композитор считает кадр сам.
+
+    Узлы и smoothstep — те же, поэтому наезд в раскладках студии (S) ведёт
+    себя ровно так же, как zoompan в классических A/B.
+    """
+    if not keys:
+        return None
+    if t <= keys[0][0] or len(keys) == 1:
+        return float(keys[0][1])
+    for (ta, va), (tb, vb) in zip(keys, keys[1:]):
+        if t < tb:
+            u = min(1.0, max(0.0, (t - ta) / max(1e-3, tb - ta)))
+            return va + (vb - va) * u * u * (3 - 2 * u)
+    return float(keys[-1][1])
+
+
+def ease(p):
+    """easeInOut (кубический): перестроения раскладок и выезды карточек."""
+    p = min(max(p, 0.0), 1.0)
+    return 4 * p ** 3 if p < 0.5 else 1 - (-2 * p + 2) ** 3 / 2
+
+
+def ease_out(p):
+    p = min(max(p, 0.0), 1.0)
+    return 1 - (1 - p) ** 3
+
+
+def lerp(a, b, p):
+    return a + (b - a) * p
+
+
+# ── раскладки ───────────────────────────────────────────────────────────────
+# Классические собирает ffmpeg блоками (blocks.py), студийные — композитор
+# на питоне (compose.py): у них перестроения, тени и наезд по ключевым кадрам.
+CLASSIC = ("A", "B", "C", "D")
+STUDIO = ("H", "HC", "S", "T")
+
+
+def face_side(P):
+    """С какой стороны кадра ставим голову.
+
+    По умолчанию — напротив взгляда: человек, который смотрит влево
+    (на экран ноутбука сбоку), должен стоять справа и смотреть в кадр.
+    Поставь его слева — он «смотрит в угол», в рамку.
+    """
+    side = getattr(P, "FACE_SIDE", None)
+    if side in ("left", "right"):
+        return side
+    gaze = getattr(P, "GAZE", "left")
+    return "right" if gaze != "right" else "left"
+
+
+# ── HyperFrames (необязательный модуль графики и масок) ─────────────────────
+def node_bin():
+    """Каталог с node ≥ 22 — HyperFrames на старом node не стартует.
+
+    На маке node из PATH часто старый (nvm), а свежий лежит у homebrew
+    в node@22/24/26 и в PATH не прописан. Ищем по версии, а не по имени.
+    """
+    import glob
+    import re as _re
+    env = os.environ.get("GEK_NODE_BIN")
+    cands = ([env] if env else [])
+    w = shutil.which("node")
+    if w:
+        cands.append(os.path.dirname(w))
+    for pat in ("/opt/homebrew/opt/node@*/bin", "/usr/local/opt/node@*/bin",
+                "/opt/homebrew/opt/node/bin", "/usr/local/opt/node/bin",
+                os.path.expanduser("~/.nvm/versions/node/v*/bin")):
+        cands += sorted(glob.glob(pat), reverse=True)
+    for d in cands:
+        node = os.path.join(d, "node")
+        if not os.path.exists(node):
+            continue
+        r = subprocess.run([node, "--version"], capture_output=True, text=True)
+        m = _re.match(r"v(\d+)", r.stdout.strip())
+        if m and int(m.group(1)) >= 22:
+            return d
+    return None
+
+
+def hf_env():
+    d = node_bin()
+    if not d:
+        return None
+    env = dict(os.environ)
+    env["PATH"] = d + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def hf_run(args, **kw):
+    """npx hyperframes … со свежим node и закрытым stdin.
+
+    stdin закрываем всегда: npx внутри цикла `while read` съедает остальные
+    строки цикла, и обрабатывается только первая. Здесь цикла нет, но привычка
+    дешёвая, а грабля дорогая.
+    """
+    env = hf_env()
+    if env is None:
+        raise RuntimeError("node ≥ 22 не найден")
+    return subprocess.run(["npx", "--yes", "hyperframes", *args], env=env,
+                          stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, **kw)
+
+
 # ── шрифты ──────────────────────────────────────────────────────────────────
 _FONT_CACHE = {}
 
@@ -191,6 +297,14 @@ REGULAR_CANDIDATES = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
     "C:/Windows/Fonts/arial.ttf",
+]
+MONO_CANDIDATES = [
+    "/System/Library/Fonts/SFNSMono.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+    "C:/Windows/Fonts/consola.ttf",
 ]
 # Запасные для символов, которых нет в основном шрифте (у Arial нет ₽).
 FALLBACK_CANDIDATES = [
@@ -212,6 +326,19 @@ def font_path(bold=True):
             return p
     die("не нашёл шрифт. Поставь DejaVu/Liberation или задай GEK_FONT_BOLD "
         "и GEK_FONT_REGULAR путями к .ttf")
+
+
+def font_mono():
+    """Моноширинный — для подписи раздела и таймкода. Нет — берём обычный."""
+    if "mono" in _FONT_CACHE:
+        return _FONT_CACHE["mono"]
+    env = os.environ.get("GEK_FONT_MONO")
+    for p in ([env] if env else []) + MONO_CANDIDATES:
+        if p and os.path.exists(p):
+            _FONT_CACHE["mono"] = p
+            return p
+    _FONT_CACHE["mono"] = font_path(False)
+    return _FONT_CACHE["mono"]
 
 
 def has_glyph(path, ch, index=0):

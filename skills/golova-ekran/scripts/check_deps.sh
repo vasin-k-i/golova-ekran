@@ -42,6 +42,26 @@ print('  %-22s %s' % ('знак рубля', ('OK  ' + fb[0]) if fb else '— н
 " 2>/dev/null || echo "  ✗ шрифтов не нашёл → поставь fonts-dejavu или задай GEK_FONT_BOLD/GEK_FONT_REGULAR"
 
 echo
+echo "Необязательное: графика HyperFrames, маска «текст за головой», звуки"
+NB="$(PYTHONPATH="$HERE" $PY -c 'import lib; print(lib.node_bin() or "")' 2>/dev/null)"
+if [ -n "$NB" ]; then
+  say "node ≥ 22" "✓ $NB"
+  if PATH="$NB:$PATH" npx --no-install hyperframes --version >/dev/null 2>&1 </dev/null; then
+    say "hyperframes" "✓ $(PATH="$NB:$PATH" npx --no-install hyperframes --version 2>/dev/null </dev/null | tail -1)"
+  else
+    say "hyperframes" "— не стоит: поставится сам при первом montage.py gfx (npx)"
+  fi
+else
+  say "node ≥ 22" "— нет: GFX и маска не заработают, PIL-графика работает → brew install node@22"
+fi
+SFXD=""
+for d in "$HOME/.claude/skills/hyperframes-media/assets/sfx" "$HOME/.codex/skills/hyperframes-media/assets/sfx"; do
+  [ -d "$d" ] && SFXD="$d" && break
+done
+if [ -n "$SFXD" ]; then say "звуки (SFX)" "✓ $SFXD"
+else say "звуки (SFX)" "— библиотеки нет: SFX['dir'] в project.py или без звуков"; fi
+
+echo
 if [ "$bad" -gt 0 ]; then
   echo "Не хватает обязательного: $bad. Поставь и запусти снова."
   echo "  macOS: brew install ffmpeg whisper-cpp && /usr/bin/pip3 install --user pillow numpy"

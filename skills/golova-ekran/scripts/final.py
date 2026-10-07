@@ -12,10 +12,18 @@ lookahead-лимитер, который и снимает щелчки.
 ⚠️ У alimiter параметр level по умолчанию ВКЛЮЧЁН — он подтягивает выход
 обратно к нулю и полностью съедает limit. Без level=false пик уезжает
 за 0 dBTP, сколько ни ставь лимит.
+
+Музыка и звуки (необязательно). MUSIC — подложка: −31 LUFS, под голосом
+прижимается ещё на 6 дБ и поднимается в паузах, смена трека — наплывом 1,6 с.
+SFX — свуш на перестроение раскладки, тихий клик на появление пункта или
+плашки, мягкий удар на полноэкранную карточку (не чаще раза в минуту),
+−20…−25 дБ. Всё это кладётся на уже выровненный голос, и итог ещё раз
+приводится к −14 LUFS тем же лимитером.
 """
 import json
 import os
 import re
+import subprocess
 
 import lib
 
@@ -94,6 +102,140 @@ def pick_gain():
     return g
 
 
+SR = 48000
+SFX_KIT = dict(whoosh=("whoosh-short.mp3", -21.0), whoosh_big=("whoosh-cinematic.mp3", -19.0),
+               impact=("impact-bass-1.mp3", -21.0), click=("click-soft.mp3", -24.0))
+SFX_DIRS = ["~/.claude/skills/hyperframes-media/assets/sfx",
+            "~/.codex/skills/hyperframes-media/assets/sfx"]
+
+
+def load(path, n=None):
+    import numpy as np
+    raw = subprocess.run([lib.FF, "-nostdin", "-v", "error", "-i", path, "-f", "f32le",
+                          "-ac", "2", "-ar", str(SR), "-"], capture_output=True).stdout
+    a = np.frombuffer(raw, np.float32).reshape(-1, 2).copy()
+    return a if n is None else a[:n]
+
+
+def db(x):
+    return 10 ** (x / 20)
+
+
+def sfx_setup():
+    cfg = getattr(P, "SFX", None)
+    if cfg is None:
+        return None, {}
+    kit = dict(SFX_KIT)
+    kit.update({k: v for k, v in cfg.items() if k != "dir"})
+    dirs = [cfg.get("dir")] if cfg.get("dir") else SFX_DIRS
+    for d in dirs:
+        d = os.path.expanduser(d)
+        if os.path.isdir(d):
+            return d, kit
+    print("   ! SFX включены, но библиотеку звуков не нашёл — задай SFX['dir']")
+    return None, kit
+
+
+def music_bed(voice, n):
+    """Подложка: −31 LUFS, прижим под голос до −6 дБ, наплыв 1,6 с на смене трека."""
+    import numpy as np
+    tracks = PL.get("music", [])
+    bed = np.zeros((n, 2), np.float32)
+    xf = int(1.6 * SR)
+    for k, m in enumerate(tracks):
+        if not os.path.exists(m["src"]):
+            lib.die(f"музыка: нет файла {m['src']}")
+        a = int(m["a"] * SR)
+        b = int(tracks[k + 1]["a"] * SR) + xf // 2 if k + 1 < len(tracks) else n
+        b = min(b, n)
+        x = load(m["src"])
+        if not len(x) or b <= a:
+            continue
+        reps = int(np.ceil((b - a) / len(x)))
+        x = np.tile(x, (reps, 1))[:b - a]            # короткий трек — по кругу
+        i_lufs = loud(m["src"])[0]
+        x *= db(m["lufs"] - i_lufs)
+        if k:                                        # вход наплывом
+            q = min(xf, len(x))
+            x[:q] *= np.linspace(0, 1, q)[:, None]
+        if k + 1 < len(tracks):                      # выход наплывом
+            q = min(xf, len(x))
+            x[-q:] *= np.linspace(1, 0, q)[:, None]
+        bed[a:b] += x
+    q = int(0.6 * SR)
+    bed[:q] *= np.linspace(0, 1, q)[:, None]
+    q = min(n, int(1.8 * SR))
+    bed[n - q:] *= np.linspace(1, 0, q)[:, None]
+    env = np.abs(voice).mean(1)
+    w = int(0.25 * SR)
+    env = np.convolve(env, np.ones(w, np.float32) / w, mode="same")
+    ref = float(np.percentile(env, 95)) or 1.0
+    duck = np.clip(1 - env / (ref * 0.08), db(-6), 1.0)   # под голосом −6 дБ
+    return bed * duck[:, None]
+
+
+def sfx_track(n):
+    import numpy as np
+    d, kit = sfx_setup()
+    out = np.zeros((n, 2), np.float32)
+    if not d:
+        return out, {}
+    ev = [list(e) for e in PL.get("events", [])] + \
+         [[t, f, g] for t, f, g in PL.get("sfx_extra", [])]
+    ev.sort(key=lambda e: e[0])
+    cache, count, last_impact = {}, {}, -1e9
+    for e in ev:
+        t, name = float(e[0]), e[1]
+        if name == "impact":
+            if t - last_impact < 60:                 # удар — не чаще раза в минуту
+                continue
+            last_impact = t
+        fname, gain = kit.get(name, (name, -24.0))
+        if len(e) > 2:
+            gain = float(e[2])
+        path = fname if os.path.isabs(fname) else os.path.join(d, fname)
+        if not os.path.exists(path):
+            continue
+        if path not in cache:
+            cache[path] = load(path)
+        x = cache[path] * db(gain)
+        i = int(t * SR)
+        if i < 0 or i >= n:
+            continue
+        j = min(n, i + len(x))
+        out[i:j] += x[:j - i]
+        count[name] = count.get(name, 0) + 1
+    return out, count
+
+
+def mix_master(g, master):
+    """Голос (уже с усилением и лимитером) + подложка + звуки → снова −14 LUFS."""
+    import numpy as np
+    vo = f"{W}/voice_proc.wav"
+    lib.run([lib.FF, "-y", "-v", "error", "-i", AUDIO, "-af",
+             f"highpass=f=75,volume={g}dB,{CHAIN_TAIL}", "-ar", str(SR), "-ac", "2", vo])
+    voice = load(vo)
+    n = len(voice)
+    bed = music_bed(voice, n) if PL.get("music") else np.zeros_like(voice)
+    fx, count = sfx_track(n)
+    raw = f"{W}/mix_raw.wav"
+    subprocess.run([lib.FF, "-nostdin", "-y", "-v", "error", "-f", "f32le", "-ar", str(SR),
+                    "-ac", "2", "-i", "-", raw], input=(voice + bed + fx).tobytes(), check=True)
+    i0 = loud(raw)[0]
+    gain = round(TARGET_LUFS - i0, 2)
+    lib.run([lib.FF, "-y", "-v", "error", "-i", VIDEO, "-i", raw,
+             "-af", f"volume={gain}dB,{CHAIN_TAIL}", "-map", "0:v", "-map", "1:a",
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", str(SR),
+             "-movflags", "+faststart", "-shortest", master])
+    parts = []
+    if PL.get("music"):
+        parts.append(f"музыка {len(PL['music'])} трек(а), −31 LUFS, под голосом ещё −6 дБ")
+    if count:
+        parts.append("звуков " + str(sum(count.values())) + " (" +
+                     ", ".join(f"{k} {v}" for k, v in sorted(count.items())) + ")")
+    print("   " + " · ".join(parts))
+
+
 def main():
     dv, da = lib.duration(VIDEO), lib.duration(AUDIO)
     print(f"картинка {dv:.3f} с · звук {da:.3f} с · "
@@ -105,9 +247,12 @@ def main():
     chain = f"highpass=f=75,volume={g}dB,{CHAIN_TAIL}"
     name = getattr(P, "OUT_NAME", "Ролик")
     master = os.path.join(OUT, f"{name}.mp4")
-    lib.run([lib.FF, "-y", "-v", "error", "-i", VIDEO, "-i", AUDIO, "-af", chain,
-             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-             "-movflags", "+faststart", "-shortest", master])
+    if PL.get("music") or getattr(P, "SFX", None) is not None:
+        mix_master(g, master)
+    else:
+        lib.run([lib.FF, "-y", "-v", "error", "-i", VIDEO, "-i", AUDIO, "-af", chain,
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                 "-movflags", "+faststart", "-shortest", master])
     i1, tp1, lra = loud(master)
     print(f"\nготово: {master}")
     print(f"  {lib.duration(master):.2f} с · {os.path.getsize(master) / 1e6:.0f} МБ")

@@ -1,0 +1,52 @@
+/* Общий стиль кусков графики. Цвета и шрифты подставляет gfx.py:
+   --acc — ACCENT из project.py, шрифты — локальные файлы (fonts.css), без CDN.
+
+   Правило вёрстки: у плашек и узлов НЕТ фиксированной ширины в паре с запретом
+   переноса. Ширина — по тексту (fit-content), потолок — max-width, дальше перенос.
+   На пробе узлы «Платные курсы» и «Реальная практика» стояли с width + nowrap
+   и вылезли из своих рамок. `hyperframes check` такое ловит, gfx.py не рендерит
+   кусок, пока он не прошёл проверку. */
+:root{--bg:#0E0F12;--surf:#17191E;--surf2:#1D2026;--ink:#F2F3F5;--muted:#9297A1;--dim:#5C6170;--line:#272A31;--ok:#5BD08A;
+  --f-display:"GEK Display",sans-serif;--f-text:"GEK Text",sans-serif;--f-mono:"GEK Mono",monospace}
+html,body{margin:0;padding:0;background:transparent}
+*{box-sizing:border-box}
+.root{position:relative;width:1920px;height:1080px;overflow:hidden;background:transparent;font-family:var(--f-text);color:var(--ink)}
+.clip{position:absolute;inset:0}
+.disp{font-family:var(--f-display);font-weight:800;letter-spacing:-0.02em;line-height:1.04}
+.mono{font-family:var(--f-mono);text-transform:uppercase;letter-spacing:.14em;font-size:15px;color:var(--muted);font-weight:500}
+.acc{color:var(--acc)}
+.panel{position:absolute;max-width:920px;background:rgba(19,21,26,.92);border:1px solid rgba(255,255,255,.08);border-radius:24px;box-shadow:0 40px 80px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.04);padding:40px 44px}
+.panel .hd{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+.panel .hd i{display:block;width:10px;height:10px;background:var(--acc);border-radius:2px}
+.row{display:flex;align-items:center;gap:20px;font-size:32px;line-height:1.25;padding:14px 0;border-top:1px solid rgba(255,255,255,.06);position:relative}
+.row:first-of-type{border-top:0}
+.num{font-family:var(--f-mono);font-size:16px;color:var(--dim);width:34px;flex:none}
+.tick{width:34px;height:34px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:var(--f-display);font-weight:800;font-size:18px}
+.tick.ok{background:color-mix(in srgb,var(--acc) 16%,transparent);color:var(--acc)}
+.tick.no{background:rgba(255,255,255,.06);color:var(--dim)}
+.strike{position:absolute;left:54px;right:0;top:50%;height:3px;background:var(--acc);transform-origin:0 50%;border-radius:2px;display:block}
+/* плашка: ширина по тексту, потолок — и перенос, а не вылет */
+.chip{position:absolute;display:inline-flex;align-items:center;gap:14px;width:max-content;max-width:900px;flex-wrap:wrap;background:var(--acc);color:#fff;border-radius:14px;padding:14px 22px;font-family:var(--f-display);font-weight:800;font-size:30px;line-height:1.15;letter-spacing:-.01em;box-shadow:0 20px 40px rgba(0,0,0,.35)}
+.chip.dark{background:rgba(14,15,18,.92);border:1px solid rgba(255,255,255,.1);color:var(--ink)}
+.chip small{font-family:var(--f-mono);font-weight:500;font-size:14px;letter-spacing:.14em;text-transform:uppercase;opacity:.8}
+/* у акцентной плашки свой цвет текста: .acc на акценте не читается */
+.chip .acc,.node.acc .acc{color:#fff}
+.chips{position:absolute;display:flex;flex-wrap:wrap;gap:14px;max-width:1500px}
+.chips .chip{position:relative}
+/* крупное слово (в т.ч. «текст за головой»): одно-два слова, перенос не нужен,
+   но рамку кадра check всё равно проверит */
+.hero{position:absolute;font-family:var(--f-display);font-weight:900;letter-spacing:-.04em;line-height:.9;white-space:nowrap}
+.full{position:absolute;inset:0;background:var(--bg)}
+.full .grid{position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.05) 1.2px,transparent 1.3px);background-size:40px 40px}
+/* узел схемы: ширина по тексту; ряд узлов — флекс-контейнером, а не координатами */
+.node{position:absolute;width:max-content;max-width:600px;background:var(--surf2);border:1px solid rgba(255,255,255,.09);border-radius:18px;padding:18px 22px;box-shadow:0 20px 40px rgba(0,0,0,.35)}
+.nodes{position:absolute;display:flex;flex-wrap:wrap;gap:20px;max-width:920px}
+.nodes .node{position:relative}
+.node .mono{font-size:13px;display:block;margin-bottom:8px}
+.node b{font-family:var(--f-display);font-weight:700;font-size:26px;letter-spacing:-.01em;display:block;line-height:1.15}
+.node.acc{background:var(--acc);border-color:transparent;color:#fff}
+.node.acc .mono{color:rgba(255,255,255,.75)}
+.line{position:absolute;background:rgba(255,255,255,.18);transform-origin:0 0}
+.bar{height:22px;border-radius:11px;background:rgba(255,255,255,.07);position:relative;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;width:100%;border-radius:11px;background:var(--ink);transform-origin:0 50%;display:block}
+.bar.acc i{background:var(--acc)}

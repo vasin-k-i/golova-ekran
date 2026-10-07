@@ -24,6 +24,22 @@ SEEK_PAD = 12.0
 BEZEL = "0x101115"
 
 
+def fresh(path, key):
+    """Готовый промежуточный файл годится, только если собран с теми же вводными.
+
+    Раньше хватало «файл есть»: поправил DROP или кроп, перезапустил cut —
+    и молча получил старую резку. Теперь рядом лежит ключ вводных.
+    """
+    k = path + ".key"
+    return (os.path.exists(path) and os.path.exists(k)
+            and open(k).read() == key)
+
+
+def stamp(path, key):
+    with open(path + ".key", "w") as fh:
+        fh.write(key)
+
+
 def normalize_screen(t):
     """Кроп рабочего окна → холст SCR_W×SCR_H → нуль совпадает с нулём головы.
 
@@ -32,8 +48,16 @@ def normalize_screen(t):
     разъезжается; такие дубли ставь в раскладку C или D.
     """
     out = f"{W}/scr_{t['id']}.mp4"
-    if os.path.exists(out):
+    key = repr((t.get("screen"), t.get("crop"), t.get("offset"), t["head"],
+                G["SCR_W"], G["SCR_H"], FPS))
+    if fresh(out, key):
         return out
+    _normalize(t, out)
+    stamp(out, key)
+    return out
+
+
+def _normalize(t, out):
     if not t.get("screen"):
         lib.run([lib.FF, "-y", "-v", "error", "-i", t["head"], "-an", "-vf",
                  f"scale=320:-2,gblur=sigma=12,"
@@ -153,13 +177,21 @@ def main():
         if not sp:
             continue
         want = sum(b - a + 1 for a, b in sp)
+        key = repr((sp, t["head"], FPS))
         h = f"{W}/head_{tid}.mp4"
-        gh = lib.nframes(h) if os.path.exists(h) else \
-            cut_video(t["head"], h, sp, f"hs_{tid}")
+        if fresh(h, key):
+            gh = lib.nframes(h)
+        else:
+            gh = cut_video(t["head"], h, sp, f"hs_{tid}")
+            stamp(h, key)
         heads.append(h)
         s = f"{W}/scrc_{tid}.mp4"
-        gs = lib.nframes(s) if os.path.exists(s) else \
-            cut_video(f"{W}/scr_{tid}.mp4", s, sp, f"ss_{tid}", tail=25)
+        skey = key + open(f"{W}/scr_{tid}.mp4.key").read()
+        if fresh(s, skey):
+            gs = lib.nframes(s)
+        else:
+            gs = cut_video(f"{W}/scr_{tid}.mp4", s, sp, f"ss_{tid}", tail=25)
+            stamp(s, skey)
         scrs.append(s)
         auds.append(cut_audio(t["head"], sp, f"as_{tid}"))
         print(f"  дубль {tid}: {len(sp):3d} сегм · голова {gh} кадр · "
