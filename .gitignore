@@ -6,3 +6,4 @@ project.py
 __pycache__/
 *.pyc
 .DS_Store
+repeats_ok.json

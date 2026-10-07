@@ -26,8 +26,12 @@ TW, TH = 640, 360
 
 
 def source():
-    m = os.path.join(lib.out_dir(), f"{getattr(P, 'OUT_NAME', 'Ролик')}.mp4")
-    return m if os.path.exists(m) else f"{W}/video_nosound.mp4"
+    name = getattr(P, "OUT_NAME", "Ролик")
+    for m in (f"{name}.mp4", f"{name} — {lib.NO_REPEATS_TAG}.mp4"):
+        p = os.path.join(lib.out_dir(), m)
+        if os.path.exists(p):
+            return p
+    return f"{W}/video_nosound.mp4"
 
 
 def grab(src, t):

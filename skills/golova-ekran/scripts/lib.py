@@ -148,6 +148,64 @@ def has_audio(f):
     return bool(out)
 
 
+# ── отметка «проход по повторам сделан» ────────────────────────────────────
+REPEATS_FILE = "repeats_ok.json"
+NO_REPEATS_TAG = "БЕЗ ЧИСТКИ ПОВТОРОВ"
+
+
+def repeats_key(P):
+    """Отметка привязана к резке тишины и к спискам: поменял — согласуй заново."""
+    import hashlib
+    segs = read_json("segments.json") if os.path.exists(
+        os.path.join(work_dir(), "segments.json")) else []
+    base = [(s["take"], s["a"], s["b"]) for s in segs]
+    lists = (sorted(getattr(P, "DROP", [])), list(getattr(P, "TRIM", [])),
+             getattr(P, "BW", None))
+    return hashlib.sha1(repr((base, lists)).encode()).hexdigest()
+
+
+def repeats_state(P):
+    p = os.path.join(project_dir(), REPEATS_FILE)
+    if not os.path.exists(p):
+        return False, "✗ проход по повторам НЕ отмечен"
+    with open(p, encoding="utf-8") as fh:
+        d = json.load(fh)
+    if d.get("key") != repeats_key(P):
+        return False, ("✗ отметка устарела: после согласования поменялись "
+                       "DROP/TRIM/BW или резка тишины — согласуй список заново")
+    return True, f"✓ проход по повторам согласован: {d.get('note')} ({d.get('date')})"
+
+
+def write_repeats_ok(P, note):
+    import time
+    with open(os.path.join(project_dir(), REPEATS_FILE), "w", encoding="utf-8") as fh:
+        json.dump(dict(key=repeats_key(P), note=note,
+                       date=time.strftime("%Y-%m-%d %H:%M")), fh, ensure_ascii=False)
+
+
+def repeats_guard(P, argv, step):
+    """build и final не собирают мастер без согласованного прохода по повторам.
+
+    Обход — только явным флагом --skip-repeats: тогда это видно и в консоли,
+    и в имени файла мастера. Возвращает True, если идём в обход.
+    """
+    ok, msg = repeats_state(P)
+    skip = "--skip-repeats" in argv
+    if ok:
+        return False
+    if not skip:
+        die(f"{step}: {msg}.\n"
+            "  Сначала проход по повторам и оговоркам (SKILL.md, шаг 4): "
+            "`montage.py repeats`,\n  список — человеку ДО резки, после «да» — "
+            "`montage.py repeats --approve \"кто и когда\"`.\n"
+            "  Собрать в обход можно только явно: --skip-repeats "
+            "(мастер получит пометку в имени)")
+    bar = "!" * 64
+    print(f"{bar}\n  {step}: {NO_REPEATS_TAG} (--skip-repeats). Такой ролик человеку\n"
+          f"  не показывать: в нём остались фальстарты и оговорки.\n{bar}", flush=True)
+    return True
+
+
 def ms(t):
     return f"{int(t // 60)}:{t % 60:05.2f}"
 

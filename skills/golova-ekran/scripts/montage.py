@@ -6,6 +6,8 @@
   montage.py probe --pair ГОЛОВА ЭКРАН   сдвиг, окна показа, черновик конфига
   montage.py segments                    резка тишины
   montage.py transcribe                  расшифровка каждого сегмента отдельно
+  montage.py repeats                     что режем дословно + кандидаты в повторы
+  montage.py repeats --approve "кто, когда"   отметка: список согласован человеком
   montage.py plan                        что режем и чем оформляем
   montage.py design                      маски, тени, панели инфографики
   montage.py inserts                     клипы вставок и плашки
@@ -20,6 +22,9 @@
   montage.py cover                       обложка
   montage.py all                         design → inserts → cut → zoom → gfx → matte →
                                          build → final → frames
+
+build и final не собирают мастер без отметки `repeats --approve`. Обход — только
+явно: `--skip-repeats` (мастер получит в имени «БЕЗ ЧИСТКИ ПОВТОРОВ»).
 
 Конфиг ролика — project.py в текущей папке (или в GEK_PROJECT).
 """
@@ -92,16 +97,17 @@ def main():
     if cmd == "check":
         return check(rest)
     if cmd == "all":
+        flags = [x for x in rest if x == "--skip-repeats"]
         for s in ("design", "inserts", "cut", "zoom", "gfx", "matte", "blocks",
                   "final", "frames"):
             print(f"\n═══ {s} ═══", flush=True)
-            run_step(s)
+            run_step(s, flags if s in ("blocks", "final") else ())
         return
     if cmd == "preview":
         return run_step("compose", ["--preview", *rest])
     alias = {"build": "blocks"}
     step = alias.get(cmd, cmd)
-    if step not in ("probe", "segments", "transcribe", "plan", "design",
+    if step not in ("probe", "segments", "transcribe", "repeats", "plan", "design",
                     "inserts", "cut", "zoom", "gfx", "matte", "blocks", "final",
                     "frames", "cover"):
         print(__doc__)

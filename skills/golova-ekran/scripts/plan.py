@@ -293,6 +293,7 @@ def main():
     for i in ins:
         print(f"   вставка {i['n']} {i['lay']}  {lib.ms(i['a'])} +{i['dur']} с")
     rhythm(blocks, total)
+    print(f"\n{lib.repeats_state(P)[1]}")
     for name, n in (("стоп-кадров", len(timed["freezes"])),
                     ("ключей камеры на экран", len(timed["cams"])),
                     ("плашек", len(timed["chips"])),

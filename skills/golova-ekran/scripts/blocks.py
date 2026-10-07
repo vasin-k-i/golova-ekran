@@ -276,6 +276,7 @@ def build_studio(todo):
 
 
 def main():
+    lib.repeats_guard(P, sys.argv[1:], "build")
     os.makedirs(BLK, exist_ok=True)
     blocks = PL["blocks"]
     placed = {x["n"] for blk in blocks for x in PL["inserts"]

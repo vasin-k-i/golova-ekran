@@ -237,6 +237,8 @@ def mix_master(g, master):
 
 
 def main():
+    import sys
+    raw_cut = lib.repeats_guard(P, sys.argv[1:], "final")
     dv, da = lib.duration(VIDEO), lib.duration(AUDIO)
     print(f"картинка {dv:.3f} с · звук {da:.3f} с · "
           f"расхождение {abs(dv - da) * 1000:.0f} мс")
@@ -246,6 +248,8 @@ def main():
     g = GAIN if GAIN is not None else pick_gain()
     chain = f"highpass=f=75,volume={g}dB,{CHAIN_TAIL}"
     name = getattr(P, "OUT_NAME", "Ролик")
+    if raw_cut:
+        name += f" — {lib.NO_REPEATS_TAG}"
     master = os.path.join(OUT, f"{name}.mp4")
     if PL.get("music") or getattr(P, "SFX", None) is not None:
         mix_master(g, master)
