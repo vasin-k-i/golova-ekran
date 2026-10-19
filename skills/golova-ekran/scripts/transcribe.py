@@ -35,7 +35,9 @@ def server_alive():
 
 def one(s):
     clips = os.path.join(lib.work_dir(), "clips")
-    wav = os.path.join(clips, f"{s['i']:04d}.wav")
+    # имя клипа — от границ сегмента, а не от номера: после смены порядка дублей
+    # или перерезки номера съезжают, и по номеру в расшифровку попадал чужой звук
+    wav = os.path.join(clips, f"{s['take']}_{s['a']:.3f}_{s['d']:.3f}.wav")
     if not os.path.exists(wav):
         lib.run([lib.FF, "-y", "-v", "error", "-ss", f"{s['a']:.3f}",
                  "-t", f"{s['d']:.3f}", "-i", SRC[s["take"]], "-vn",
