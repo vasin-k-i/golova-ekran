@@ -156,8 +156,12 @@ def render(p, d, key):
         if bad:
             return p["id"], 0, "НЕ ПРОШЁЛ check:\n      " + "\n      ".join(bad)
     shutil.rmtree(out, ignore_errors=True)
+    extra = []
+    # при нехватке памяти многопоточный захват падает («Re-run with --workers 1»)
+    if os.environ.get("GEK_HF_WORKERS"):
+        extra = ["--workers", os.environ["GEK_HF_WORKERS"]]
     r = lib.hf_run(["render", d, "--format", "png-sequence", "-o", out,
-                    "-f", str(FPS), "--quiet"])
+                    "-f", str(FPS), "--quiet", *extra])
     if r.returncode:
         return p["id"], 0, f"рендер упал: {(r.stderr or r.stdout)[-600:]}"
     n = len([f for f in os.listdir(out) if f.endswith(".png")])
